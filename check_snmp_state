@@ -190,7 +190,6 @@ if($mp->opts->next) {
 
 if($mp->opts->delimiter) {
     $delimiter = $mp->opts->delimiter;
-    print "KAKA!\n";
 }
 
 if($mp->opts->critical) {
