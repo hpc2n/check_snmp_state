@@ -86,7 +86,8 @@ We expect `Normal` to signify an `OK` state. Everything else will get an
 Since newer XClarity firmwares only supports SNMP v3, that's what we use.
 
 ```
-$ ./check_snmp_state -M /path/to/mibs/lenovo/xcc -P 3 -U snmpuser -H hostname-xcc -W -O Normal -o LENOVO-XCC-MIB::memoryHealthStatus
+$ ./check_snmp_state -M /path/to/mibs/lenovo/xcc -P 3 -U snmpuser \
+  -H hostname-xcc -O Normal -W -o LENOVO-XCC-MIB::memoryHealthStatus
 SNMP_STATE OK - 6 OK
 OK: LENOVO-XCC-MIB::memoryHealthStatus.1 Normal
 OK: LENOVO-XCC-MIB::memoryHealthStatus.2 Normal
@@ -103,7 +104,9 @@ enumerates the status, so we can actually tell the plugin what to expect as
 ok/warning/critical states.
 
 ```
-$ ./check_snmp_state -M /path/to/mibs/idrac -H hostname-idrac -W -O ok -w nonCritical -c critical -c nonRecoverable -o IDRAC-MIB-SMIv2::memoryDeviceStatus
+$ ./check_snmp_state -M /path/to/mibs/idrac -H hostname-idrac \
+   -O ok -w nonCritical -c critical -c nonRecoverable \
+   -W -o IDRAC-MIB-SMIv2::memoryDeviceStatus
 SNMP_STATE OK - 16 OK
 OK: IDRAC-MIB-SMIv2::memoryDeviceStatus.1.1 ok
 OK: IDRAC-MIB-SMIv2::memoryDeviceStatus.1.2 ok
@@ -132,7 +135,16 @@ Here we leverage that the MIB file enumerates the status, so we can
 actually tell the plugin what to expect as ok/warning/critical states.
 
 ```
-$ ./check_snmp_state -M /path/to/mibs/idrac -H hostname-idrac -O ok -w nonCritical -c critical -c nonRecoverable -o IDRAC-MIB-SMIv2::globalSystemStatus.0 -o IDRAC-MIB-SMIv2::globalStorageStatus.0 -o IDRAC-MIB-SMIv2::systemStateGlobalSystemStatus.1 -o IDRAC-MIB-SMIv2::systemStatePowerSupplyStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateVoltageStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateAmperageStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateCoolingDeviceStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateTemperatureStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateMemoryDeviceStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateChassisIntrusionStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStatePowerUnitStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateCoolingUnitStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateProcessorDeviceStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateBatteryStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateTemperatureStatisticsStatusCombined.1
+$ ./check_snmp_state -M /path/to/mibs/idrac -H hostname-idrac \
+   -O ok -w nonCritical -c critical -c nonRecoverable \
+   -o IDRAC-MIB-SMIv2::globalSystemStatus.0 -o IDRAC-MIB-SMIv2::globalStorageStatus.0 \
+   -o IDRAC-MIB-SMIv2::systemStateGlobalSystemStatus.1 -o IDRAC-MIB-SMIv2::systemStatePowerSupplyStatusCombined.1 \
+   -o IDRAC-MIB-SMIv2::systemStateVoltageStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateAmperageStatusCombined.1 \
+   -o IDRAC-MIB-SMIv2::systemStateCoolingDeviceStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateTemperatureStatusCombined.1 \
+   -o IDRAC-MIB-SMIv2::systemStateMemoryDeviceStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateChassisIntrusionStatusCombined.1 \
+   -o IDRAC-MIB-SMIv2::systemStatePowerUnitStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateCoolingUnitStatusCombined.1 \
+   -o IDRAC-MIB-SMIv2::systemStateProcessorDeviceStatusCombined.1 -o IDRAC-MIB-SMIv2::systemStateBatteryStatusCombined.1 \
+   -o IDRAC-MIB-SMIv2::systemStateTemperatureStatisticsStatusCombined.1
 SNMP_STATE OK - 15 OK
 OK: IDRAC-MIB-SMIv2::globalSystemStatus.0 ok
 OK: IDRAC-MIB-SMIv2::globalStorageStatus.0 ok
