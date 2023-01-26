@@ -1,0 +1,399 @@
+#!/usr/bin/perl
+# vim:et:sts=4:ai:sw=4:
+
+# check_snmp_state - SNMP walk-capable monitoring plugin for Icinga/Nagios
+# Copyright (C) 2023 Niklas.Edmundsson@hpc2n.umu.se
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+use strict;
+use warnings;
+
+use Monitoring::Plugin;
+
+our $mp;
+
+my $snmpbaseargs = "-Oq";
+
+# -----------------------------------
+
+$mp = Monitoring::Plugin->new(
+        usage => "Usage: %s [ -v|--verbose ] [--help]",
+    );
+
+$mp->add_arg(
+    spec => 'hostname|H=s',
+    help => 'Target host, aka SNMP agent',
+    label => 'hostname or IP address',
+    required => 1,
+);
+
+$mp->add_arg(
+    spec => 'critical|c=s@',
+    help => 'Critical status',
+    label => 'string',
+);
+
+$mp->add_arg(
+    spec => 'warning|w=s@',
+    help => 'Warning status',
+    label => 'string',
+);
+
+$mp->add_arg(
+    spec => 'ok|O|string|s=s@',
+    help => 'OK status',
+    label => 'string',
+);
+
+$mp->add_arg(
+    spec => 'delimiter|d=s',
+    help => 'Set delimiter enabling a single critical/warning/ok argument to specify multiple strings.',
+    label => 'character/string/pattern',
+);
+
+$mp->add_arg(
+    spec => 'next|n',
+    help => 'Use SNMP GETNEXT instead of SNMP GET',
+);
+
+$mp->add_arg(
+    spec => 'walk|W',
+    help => 'Do snmpwalk/snmpbulkwalk of specified tree',
+);
+
+$mp->add_arg(
+    spec => 'protocol|P=s',
+    help => "SNMP protocol version (default: %s)",
+    label => '[1|2c|3]',
+    default => '2c',
+);
+
+$mp->add_arg(
+    spec => 'community|C=s',
+    help => "SNMP v1/v2c community string (default: %s)",
+    label => 'string',
+    default => 'public',
+);
+
+$mp->add_arg(
+    spec => 'context|N=s',
+    help => 'SNMPv3 context',
+    label => 'CONTEXT',
+);
+
+$mp->add_arg(
+    spec => 'seclevel|L=s',
+    help => "SNMPv3 securityLevel (default: %s)",
+    label => '[noAuthNoPriv|authNoPriv|authPriv]',
+    default => 'noAuthNoPriv',
+);
+
+$mp->add_arg(
+    spec => 'secname|U=s',
+    help => 'SNMPv3 username',
+    label => 'username',
+);
+
+$mp->add_arg(
+    spec => 'authproto|a=s',
+    help => 'SNMPv3 auth proto',
+    label => '[MD5|SHA|SHA-512|SHA-384|SHA-256|SHA-224]',
+);
+
+$mp->add_arg(
+    spec => 'privproto|x=s',
+    help => 'SNMPv3 priv proto',
+    label => '[DES|AES]',
+);
+
+$mp->add_arg(
+    spec => 'authpassword|A=s',
+    help => 'SNMPv3 authentication password',
+    label => 'password',
+);
+
+$mp->add_arg(
+    spec => 'privpassword|privpasswd|X=s',
+    help => 'SNMPv3 privacy password',
+    label => 'password',
+);
+
+$mp->add_arg(
+    spec => 'oid|oids|o=s@',
+    help => 'OIDs whose value you wish to query',
+    label => 'OID1 ... OIDn',
+);
+
+$mp->add_arg(
+    spec => 'miblist|m=s@',
+    help => 'List of MIBS to be loaded',
+    label => 'ALL|MIB1:...:MIBn',
+);
+
+$mp->add_arg(
+    spec => 'mibdir|mibdirs|M=s@',
+    help => 'MIB directory/ies',
+    label => 'DIR1:...:DIRn',
+);
+
+$mp->add_arg(
+    spec => 'retries|e=i',
+    help => "Number of retries to be used in the requests (default: %s)",
+    default => 2,
+);
+
+$mp->getopts;
+
+#############################################
+# Basic argument mangling
+
+my ($miblist, $mibdir);
+my @oid;
+my $snmpget = "snmpget";
+my $snmpwalk = "snmpbulkwalk";
+my @critical;
+my @warning;
+my @ok;
+my $delimiter = "";
+
+if($mp->opts->miblist) {
+    $miblist = join(':', @{$mp->opts->miblist});
+}
+if($mp->opts->mibdir) {
+    $mibdir = join(':', @{$mp->opts->mibdir});
+}
+if($mp->opts->oid) {
+    foreach my $o (@{$mp->opts->oid}) {
+        push @oid, split(/ /, $o);
+    }
+}
+
+if($mp->opts->protocol eq "1") {
+    $snmpwalk = "snmpwalk";
+}
+
+if($mp->opts->next) {
+    $snmpget = "snmpgetnext";
+}
+
+if($mp->opts->delimiter) {
+    $delimiter = $mp->opts->delimiter;
+    print "KAKA!\n";
+}
+
+if($mp->opts->critical) {
+    foreach my $c (@{$mp->opts->critical}) {
+        if($delimiter ne "") {
+            push @critical, split(/$delimiter/, $c);
+        }
+        else {
+            push @critical, $c;
+        }
+    }
+}
+
+if($mp->opts->warning) {
+    foreach my $w (@{$mp->opts->warning}) {
+        if($delimiter ne "") {
+            push @warning, split(/$delimiter/, $w);
+        }
+        else {
+            push @warning, $w;
+        }
+    }
+}
+
+if($mp->opts->ok) {
+    foreach my $o (@{$mp->opts->ok}) {
+        if($delimiter ne "") {
+            push @ok, split(/$delimiter/, $o);
+        }
+        else {
+            push @ok, $o;
+        }
+    }
+}
+
+#############################################
+# Sanity-check arguments
+
+if(@ARGV) {
+    $mp->plugin_die("Leftover arguments without specifying option");
+}
+
+if(! @oid) {
+    $mp->plugin_die("Must specify at least one OID to check!");
+}
+
+if($mp->opts->walk && scalar(@oid) > 1) {
+    $mp->plugin_die("Can't walk more than one tree at a time.");
+}
+
+if($mp->opts->walk && $mp->opts->next) {
+    $mp->plugin_die("Walk always implies GETNEXT.");
+}
+
+if($mp->opts->protocol !~ /^(1|2c|3)$/) {
+    $mp->plugin_die("Unknown protocol: " . $mp->opts->protocol);
+}
+
+if($mp->opts->protocol eq '3' && !$mp->opts->secname) {
+    $mp->plugin_die("Must give secname when using protocol v3");
+}
+
+if($mp->opts->seclevel !~ /^(noAuthNoPriv|authNoPriv|authPriv)$/) {
+    $mp->plugin_die("Unknown seclevel: " . $mp->opts->seclevel);
+}
+
+if($mp->opts->seclevel ne 'noAuthNoPriv' && !$mp->opts->authpassword) {
+    $mp->plugin_die("Must give authpassword when using " . $mp->opts->seclevel);
+}
+
+if($mp->opts->seclevel eq 'authPriv' && !$mp->opts->privpassword) {
+    $mp->plugin_die("Must give privpassword when using " . $mp->opts->seclevel);
+}
+
+if(!@critical && !@warning && !@ok) {
+    $mp->plugin_die("Must give at least one critical/warning/ok argument to define states.");
+}
+
+
+if($mp->opts->verbose >=2) {
+    print "miblist: " , $miblist // "" , "\n";
+    print "mibdir: " , $mibdir // "" , "\n";
+    print "oid: " , join(" ", @oid), "\n";
+    print "critical: '" , join("' '", @critical), "'\n";
+    print "warning: '" , join("' '", @warning), "'\n";
+    print "ok: '" , join("' '", @ok), "'\n";
+    print "delimiter: '$delimiter'\n";
+}
+
+#############################################
+# Do more useful stuff
+
+my @cmd;
+
+if($mp->opts->walk) {
+    push @cmd, $snmpwalk;
+}
+else {
+    push @cmd, $snmpget;
+}
+
+push @cmd, $snmpbaseargs;
+
+push @cmd, "-r", $mp->opts->retries;
+
+if($miblist) {
+    push @cmd, "-m", $miblist;
+}
+
+if($mibdir) {
+    push @cmd, "-M", $mibdir;
+}
+
+push @cmd, "-v", $mp->opts->protocol;
+if($mp->opts->protocol eq "3") {
+    push @cmd, "-u", $mp->opts->secname;
+    if($mp->opts->seclevel ne 'noAuthNoPriv') {
+        push @cmd, "-A", $mp->opts->authpassword;
+    }
+
+    if($mp->opts->seclevel eq 'authPriv') {
+        push @cmd, "-X", $mp->opts->privpassword;
+    }
+    if($mp->opts->context) {
+        push @cmd, "-n", $mp->opts->context;
+    }
+    if($mp->opts->authproto) {
+        push @cmd, "-a", $mp->opts->authproto;
+    }
+    if($mp->opts->privproto) {
+        push @cmd, "-x", $mp->opts->privproto;
+    }
+}
+else {
+    push @cmd, "-c", $mp->opts->community;
+}
+
+push @cmd, $mp->opts->hostname;
+
+push @cmd, @oid;
+
+if($mp->opts->verbose >=2) {
+    print "\@cmd: ", join(" ", @cmd), "\n";
+}
+
+my @crits;
+my @warns;
+my @oks;
+my @undefs;
+
+open(my $fh, "-|", @cmd) or die "Running $cmd[0]: $!";
+LINE: foreach my $s (<$fh>) {
+    chomp $s;
+    my($o, $v) = split(/ /, $s, 2);
+    $v =~ s/^"|"$//g;
+    print "o: $o  v: $v\n" if($mp->opts->verbose >=2);
+    if(!$v) {
+        $mp->add_message(CRITICAL, "Input '$s' didn't parse");
+        push @undefs, "CRITICAL/PARSE ERROR: $s";
+        next;
+    }
+    foreach my $c (@critical) {
+        if($v eq $c) {
+            $mp->add_message(CRITICAL, "$o=$v");
+            push @crits, "CRITICAL: $o $v";
+            next LINE;
+        }
+    }
+    foreach my $w (@warning) {
+        if($v eq $w) {
+            $mp->add_message(WARNING, "$o=$v");
+            push @warns, "WARNING: $o $v";
+            next LINE;
+        }
+    }
+    foreach my $s (@ok) {
+        if($v eq $s) {
+            push @oks, "OK: $o $v";
+            next LINE;
+        }
+    }
+    # Treat any leftovers as critical (add_message() doesn't allow UNKNOWN).
+    $mp->add_message(CRITICAL, "$o=$v/UNDEFINED");
+    push @undefs, "CRITICAL/UNDEFINED: $o $v";
+}
+if(!close($fh)) {
+    my $err;
+    if($? == -1) {
+        $err = "failed to execute: $!";
+    }
+    else {
+        $err = sprintf "exited with value %d", $? >> 8;
+    }
+    $mp->add_message(CRITICAL, "$cmd[0] $err");
+}
+
+my $crits = scalar @crits ? sprintf("%d Critical", scalar @crits) : undef;
+my $warns = scalar @warns ? sprintf("%d Warnings", scalar @warns) : undef;
+my $oks = scalar @oks ? sprintf("%d OK", scalar @oks) : undef;
+my $undefs = scalar @undefs ? sprintf("%d Undefined", scalar @undefs) : undef;
+
+my($code, $message) = $mp->check_messages;
+
+$message = join(", ", grep($_, $crits, $warns, $oks, $undefs)) . ($message?" - $message":"");
+
+$mp->plugin_exit($code, join("\n", $message, @crits, @warns, @oks, @undefs));
