@@ -24,7 +24,7 @@ use Monitoring::Plugin;
 
 our $mp;
 
-my $snmpbaseargs = "-Oq";
+my @snmpbaseargs = ("-Oq", "-Lo");
 
 # -----------------------------------
 
@@ -291,7 +291,7 @@ else {
     push @cmd, $snmpget;
 }
 
-push @cmd, $snmpbaseargs;
+push @cmd, @snmpbaseargs;
 
 push @cmd, "-r", $mp->opts->retries;
 
@@ -339,6 +339,7 @@ my @crits;
 my @warns;
 my @oks;
 my @undefs;
+my @others;
 
 open(my $fh, "-|", @cmd) or die "Running $cmd[0]: $!";
 LINE: foreach my $s (<$fh>) {
@@ -347,20 +348,20 @@ LINE: foreach my $s (<$fh>) {
     $v =~ s/^"|"$//g;
     print "o: $o  v: $v\n" if($mp->opts->verbose >=2);
     if(!$v) {
-        $mp->add_message(CRITICAL, "Input '$s' didn't parse");
-        push @undefs, "CRITICAL/PARSE ERROR: $s";
+        $mp->add_message(OK, "Input '$s' didn't parse.");
+        push @undefs, "UNKNOWN/PARSE ERROR: $s";
         next;
     }
     foreach my $c (@critical) {
         if($v eq $c) {
-            $mp->add_message(CRITICAL, "$o=$v");
+            $mp->add_message(CRITICAL, "$o=$v.");
             push @crits, "CRITICAL: $o $v";
             next LINE;
         }
     }
     foreach my $w (@warning) {
         if($v eq $w) {
-            $mp->add_message(WARNING, "$o=$v");
+            $mp->add_message(WARNING, "$o=$v.");
             push @warns, "WARNING: $o $v";
             next LINE;
         }
@@ -371,10 +372,19 @@ LINE: foreach my $s (<$fh>) {
             next LINE;
         }
     }
-    # Treat any leftovers as critical (add_message() doesn't allow UNKNOWN).
-    $mp->add_message(CRITICAL, "$o=$v/UNDEFINED");
-    push @undefs, "CRITICAL/UNDEFINED: $o $v";
+    # Treat any leftovers UNDEFINED.
+    $mp->add_message(OK, "$o=$v/UNDEFINED.");
+    push @undefs, "UNKNOWN/UNDEFINED: $o $v";
 }
+
+# Do this check before we add any execution errors to the mix
+my $totresults = scalar(@oks) + scalar(@warns) + scalar(@crits) + scalar(@undefs);
+if($totresults < scalar(@oid)) {
+    my $msg = "Expected " . scalar(@oid) . " values, only found $totresults";
+    $mp->add_message(OK, "$msg.");
+    push @others, "UNKNOWN/missing: $msg";
+}
+
 if(!close($fh)) {
     my $err;
     if($? == -1) {
@@ -383,7 +393,9 @@ if(!close($fh)) {
     else {
         $err = sprintf "exited with value %d", $? >> 8;
     }
-    $mp->add_message(CRITICAL, "$cmd[0] $err");
+    $err = "$cmd[0] $err";
+    $mp->add_message(OK, "$err.");
+    push @others, "UNKNOWN/execution: $err";
 }
 
 my $crits = scalar @crits ? sprintf("%d Critical", scalar @crits) : undef;
@@ -395,4 +407,8 @@ my($code, $message) = $mp->check_messages;
 
 $message = join(", ", grep($_, $crits, $warns, $oks, $undefs)) . ($message?" - $message":"");
 
-$mp->plugin_exit($code, join("\n", $message, @crits, @warns, @oks, @undefs));
+if($code == OK && (scalar(@undefs)+scalar(@others)) > 0) {
+    $code = UNKNOWN;
+}
+
+$mp->plugin_exit($code, join("\n", $message, @crits, @warns, @oks, @undefs, @others));
