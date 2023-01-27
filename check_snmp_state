@@ -74,6 +74,24 @@ $mp->add_arg(
 );
 
 $mp->add_arg(
+    spec => 'oid|oids|o=s@',
+    help => 'OIDs whose value you wish to query',
+    label => 'OID1 ... OIDn',
+);
+
+$mp->add_arg(
+    spec => 'mibdir|mibdirs|M=s@',
+    help => 'MIB directory/ies',
+    label => 'DIR1:...:DIRn',
+);
+
+$mp->add_arg(
+    spec => 'miblist|m=s@',
+    help => 'List of MIBS to be loaded',
+    label => 'ALL|MIB1:...:MIBn',
+);
+
+$mp->add_arg(
     spec => 'protocol|P=s',
     help => "SNMP protocol version (default: %s)",
     label => '[1|2c|3]',
@@ -128,24 +146,6 @@ $mp->add_arg(
     spec => 'privpassword|privpasswd|X=s',
     help => 'SNMPv3 privacy password',
     label => 'password',
-);
-
-$mp->add_arg(
-    spec => 'oid|oids|o=s@',
-    help => 'OIDs whose value you wish to query',
-    label => 'OID1 ... OIDn',
-);
-
-$mp->add_arg(
-    spec => 'miblist|m=s@',
-    help => 'List of MIBS to be loaded',
-    label => 'ALL|MIB1:...:MIBn',
-);
-
-$mp->add_arg(
-    spec => 'mibdir|mibdirs|M=s@',
-    help => 'MIB directory/ies',
-    label => 'DIR1:...:DIRn',
 );
 
 $mp->add_arg(
