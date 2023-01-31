@@ -341,27 +341,32 @@ my @oks;
 my @undefs;
 my @others;
 
+my $lastmsg;
+
 open(my $fh, "-|", @cmd) or die "Running $cmd[0]: $!";
 LINE: foreach my $s (<$fh>) {
     chomp $s;
     my($o, $v) = split(/ /, $s, 2);
     $v =~ s/^"|"$//g;
-    print "o: $o  v: $v\n" if($mp->opts->verbose >=2);
+    my $so = $o;
+    $so =~ s/^[^:]+:://;
+    print "o: $o  so: $so  v: $v\n" if($mp->opts->verbose >=2);
     if(!$v) {
         $mp->add_message(OK, "Input '$s' didn't parse.");
         push @undefs, "UNKNOWN/PARSE ERROR: $s";
         next;
     }
+    $lastmsg="$so=$v";
     foreach my $c (@critical) {
         if($v eq $c) {
-            $mp->add_message(CRITICAL, "$o=$v.");
+            $mp->add_message(CRITICAL, "$lastmsg.");
             push @crits, "CRITICAL: $o $v";
             next LINE;
         }
     }
     foreach my $w (@warning) {
         if($v eq $w) {
-            $mp->add_message(WARNING, "$o=$v.");
+            $mp->add_message(WARNING, "$lastmsg.");
             push @warns, "WARNING: $o $v";
             next LINE;
         }
@@ -373,7 +378,7 @@ LINE: foreach my $s (<$fh>) {
         }
     }
     # Treat any leftovers UNDEFINED.
-    $mp->add_message(OK, "$o=$v/UNDEFINED.");
+    $mp->add_message(OK, "$lastmsg/UNDEFINED.");
     push @undefs, "UNKNOWN/UNDEFINED: $o $v";
 }
 
@@ -405,7 +410,13 @@ my $undefs = scalar @undefs ? sprintf("%d Undefined", scalar @undefs) : undef;
 
 my($code, $message) = $mp->check_messages;
 
-$message = join(", ", grep($_, $crits, $warns, $oks, $undefs)) . ($message?" - $message":"");
+if(scalar(@crits)+scalar(@warns)+scalar(@oks)+scalar(@undefs) == 1) {
+    # Print single-value results as short status
+    $message = $lastmsg;
+}
+else {
+    $message = join(", ", grep($_, $crits, $warns, $oks, $undefs)) . ($message?" - $message":"");
+}
 
 if($code == OK && (scalar(@undefs)+scalar(@others)) > 0) {
     $code = UNKNOWN;
