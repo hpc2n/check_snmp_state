@@ -21,10 +21,20 @@ use strict;
 use warnings;
 
 use Monitoring::Plugin;
+use JSON;
+use Data::Dumper;
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Indent = 1;
 
 our $mp;
 
 my @snmpbaseargs = ("-Oq", "-Lo");
+my @rundirs = ('/run/icinga2', '/run/icinga', '/run/nagios');
+
+# Mostly for test/debug
+if($ENV{TMPDIR}) {
+    @rundirs = ( $ENV{TMPDIR} );
+}
 
 # -----------------------------------
 
@@ -77,6 +87,12 @@ $mp->add_arg(
     spec => 'oid|oids|o=s@',
     help => 'OIDs whose value you wish to query',
     label => 'OID1 ... OIDn',
+);
+
+$mp->add_arg(
+    spec => 'entityname|E=s@',
+    help => 'ENTITY-MIB::entPhysicalDescr name of entity to extract ID for and append to OID(s) of request',
+    label => 'string',
 );
 
 $mp->add_arg(
@@ -154,6 +170,12 @@ $mp->add_arg(
     default => 2,
 );
 
+$mp->add_arg(
+    spec => 'snmptimeout|T=i',
+    help => "SNMP timeout (default: %s)",
+    default => 2,
+);
+
 $mp->getopts;
 
 #############################################
@@ -161,6 +183,11 @@ $mp->getopts;
 
 my ($miblist, $mibdir);
 my @oid;
+my @entityname;
+my $cachedir = "";
+my $cachefile = "";
+my %cache;
+my $cache = \%cache;
 my $snmpget = "snmpget";
 my $snmpwalk = "snmpbulkwalk";
 my @critical;
@@ -225,6 +252,33 @@ if($mp->opts->ok) {
     }
 }
 
+if($mp->opts->entityname) {
+    foreach my $e (@{$mp->opts->entityname}) {
+       push @entityname, $e;
+    }
+    # Figure out which dir to use for caching entPhysicalDescr info.
+    foreach my $d (@rundirs) {
+        if(-d $d) {
+            $cachedir = $d;
+            last;
+        }
+    }
+    if(!$cachedir) {
+        $mp->plugin_die("Unable to figure out which cache directory to use");
+    }
+    $cachedir .= '/' . lc($mp->shortname);
+    if(! -d $cachedir) {
+        mkdir($cachedir) or $mp->plugin_die("mkdir $cachedir: $!");
+    }
+    $cachefile = "$cachedir/" . $mp->opts->hostname . ".json";
+    if(-s $cachefile) {
+        open(my $fh, '<', $cachefile) or $mp->plugin_die("open $cachefile: $!");
+        $cache = decode_json(<$fh>);
+
+        close($fh) or $mp->plugin_die("close $cachefile: $!");
+    }
+}
+
 #############################################
 # Sanity-check arguments
 
@@ -238,6 +292,10 @@ if(! @oid) {
 
 if($mp->opts->walk && scalar(@oid) > 1) {
     $mp->plugin_die("Can't walk more than one tree at a time.");
+}
+
+if($mp->opts->walk && $mp->opts->entityname) {
+    $mp->plugin_die("Can't walk and select on ENTITY name at the same time.");
 }
 
 if($mp->opts->walk && $mp->opts->next) {
@@ -277,12 +335,15 @@ if($mp->opts->verbose >=2) {
     print "warning: '" , join("' '", @warning), "'\n";
     print "ok: '" , join("' '", @ok), "'\n";
     print "delimiter: '$delimiter'\n";
+    print "cachefile: '$cachefile'\n";
+    print "entityname: '" , join("' '", @entityname), "'\n";
 }
 
 #############################################
 # Do more useful stuff
 
 my @cmd;
+my @args;
 
 if($mp->opts->walk) {
     push @cmd, $snmpwalk;
@@ -291,48 +352,116 @@ else {
     push @cmd, $snmpget;
 }
 
-push @cmd, @snmpbaseargs;
+push @args, @snmpbaseargs;
 
-push @cmd, "-r", $mp->opts->retries;
+push @args, "-r", $mp->opts->retries, "-t", $mp->opts->snmptimeout;
 
 if($miblist) {
-    push @cmd, "-m", $miblist;
+    push @args, "-m", $miblist;
 }
 
 if($mibdir) {
-    push @cmd, "-M", $mibdir;
+    push @args, "-M", $mibdir;
 }
 
-push @cmd, "-v", $mp->opts->protocol;
+push @args, "-v", $mp->opts->protocol;
 if($mp->opts->protocol eq "3") {
-    push @cmd, "-u", $mp->opts->secname;
+    push @args, "-u", $mp->opts->secname;
     if($mp->opts->seclevel ne 'noAuthNoPriv') {
-        push @cmd, "-A", $mp->opts->authpassword;
+        push @args, "-A", $mp->opts->authpassword;
     }
 
     if($mp->opts->seclevel eq 'authPriv') {
-        push @cmd, "-X", $mp->opts->privpassword;
+        push @args, "-X", $mp->opts->privpassword;
     }
     if($mp->opts->context) {
-        push @cmd, "-n", $mp->opts->context;
+        push @args, "-n", $mp->opts->context;
     }
     if($mp->opts->authproto) {
-        push @cmd, "-a", $mp->opts->authproto;
+        push @args, "-a", $mp->opts->authproto;
     }
     if($mp->opts->privproto) {
-        push @cmd, "-x", $mp->opts->privproto;
+        push @args, "-x", $mp->opts->privproto;
     }
 }
 else {
-    push @cmd, "-c", $mp->opts->community;
+    push @args, "-c", $mp->opts->community;
 }
 
-push @cmd, $mp->opts->hostname;
+push @args, $mp->opts->hostname;
 
-push @cmd, @oid;
+# Fill up the ENTITY-MIB id cache if needed
+if(@entityname && ! scalar(%{$cache})) {
+    my @getlist = ( $snmpwalk );
+    push @getlist, @args;
+    push @getlist, "ENTITY-MIB::entPhysicalDescr";
+    if($mp->opts->verbose >=2) {
+        print "\@getlist: ", join(" ", @getlist), "\n";
+    }
+    my @all;
+    open(my $fh, "-|", @getlist) or $mp->plugin_die("Running $getlist[0]: $!");
+    foreach my $s (<$fh>) {
+        chomp $s;
+        push @all, $s;
+        my($o, $v) = split(/ /, $s, 2);
+        $v =~ s/^"|"$//g;
+        print "o: $o  v: $v\n" if($mp->opts->verbose >=2);
+        if($o =~ /([0-9]+$)/) {
+            $cache->{$v} = $1;
+        }
+    }
+    if(!close($fh)) {
+        my $err;
+        if($? == -1) {
+            $err = "failed to execute: $!";
+        }
+        else {
+            $err = sprintf "exited with value %d", $? >> 8;
+        }
+        $mp->plugin_die(join("\n", "$getlist[0] $err", @all));
+    }
+
+    open(my $outfh, '>', $cachefile) or $mp->plugin_die("open $cachefile: $!");
+    print $outfh encode_json($cache);
+    close($outfh) or die $mp->plugin_die("close $cachefile: $!");
+}
 
 if($mp->opts->verbose >=2) {
-    print "\@cmd: ", join(" ", @cmd), "\n";
+    print "cache:\n", Dumper($cache);
+}
+
+my @get = @cmd;
+push @get, @args;
+
+my %expected;
+
+if(@entityname) {
+    # Request entity ID:s whose name matches
+    my @eoid;
+    foreach my $en (@entityname) {
+        next unless(defined($cache->{$en}));
+        my $id = $cache->{$en};
+        foreach my $o (@oid) {
+            my $s = "$o.$id";
+            push @eoid, $s;
+            $expected{$s} = $en;
+        }
+    }
+    if(!@eoid) {
+        $mp->plugin_die("None of the specified entity names (" . join(", ", @entityname) . ") found.");
+    }
+    push @get, @eoid;
+}
+else {
+    push @get, @oid;
+}
+
+if($mp->opts->verbose >=2) {
+    print "expected:\n", Dumper(\%expected);
+}
+
+if($mp->opts->verbose >=2) {
+    print "\@get: ", join(" ", @get), "\n";
 }
 
 my @crits;
@@ -343,7 +472,7 @@ my @others;
 
 my $lastmsg;
 
-open(my $fh, "-|", @cmd) or die "Running $cmd[0]: $!";
+open(my $fh, "-|", @get) or $mp->plugin_die("Running $get[0]: $!");
 LINE: foreach my $s (<$fh>) {
     chomp $s;
     my($o, $v) = split(/ /, $s, 2);
@@ -356,30 +485,37 @@ LINE: foreach my $s (<$fh>) {
         push @undefs, "UNKNOWN/PARSE ERROR: $s";
         next;
     }
-    $lastmsg="$so=$v";
+    my $vo = $o;
+    if($expected{$o}) {
+        $lastmsg = "$expected{$o}=$v";
+        $vo = "$expected{$o} ($o)";
+    }
+    else {
+        $lastmsg = "$so=$v";
+    }
     foreach my $c (@critical) {
         if($v eq $c) {
             $mp->add_message(CRITICAL, "$lastmsg.");
-            push @crits, "CRITICAL: $o $v";
+            push @crits, "CRITICAL: $vo $v";
             next LINE;
         }
     }
     foreach my $w (@warning) {
         if($v eq $w) {
             $mp->add_message(WARNING, "$lastmsg.");
-            push @warns, "WARNING: $o $v";
+            push @warns, "WARNING: $vo $v";
             next LINE;
         }
     }
     foreach my $s (@ok) {
         if($v eq $s) {
-            push @oks, "OK: $o $v";
+            push @oks, "OK: $vo $v";
             next LINE;
         }
     }
-    # Treat any leftovers UNDEFINED.
+    # Treat any leftovers as UNDEFINED.
     $mp->add_message(OK, "$lastmsg/UNDEFINED.");
-    push @undefs, "UNKNOWN/UNDEFINED: $o $v";
+    push @undefs, "UNKNOWN/UNDEFINED: $vo $v";
 }
 
 # Do this check before we add any execution errors to the mix
@@ -398,7 +534,7 @@ if(!close($fh)) {
     else {
         $err = sprintf "exited with value %d", $? >> 8;
     }
-    $err = "$cmd[0] $err";
+    $err = "$get[0] $err";
     $mp->add_message(OK, "$err.");
     push @others, "UNKNOWN/execution: $err";
 }
