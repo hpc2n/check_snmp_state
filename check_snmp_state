@@ -22,6 +22,7 @@ use warnings;
 
 use Monitoring::Plugin;
 use JSON;
+use List::Util qw(uniq);
 use Data::Dumper;
 $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Indent = 1;
@@ -482,7 +483,7 @@ open(my $fh, "-|", @get) or $mp->plugin_die("Running $get[0]: $!");
 LINE: foreach my $s (<$fh>) {
     chomp $s;
     my($o, $v) = split(/ /, $s, 2);
-    if(!$v) {
+    if(!defined($v)) {
         $mp->add_message(OK, "Input '$s' didn't parse.");
         push @errors, "UNKNOWN/PARSE ERROR: $s";
         next;
@@ -503,7 +504,7 @@ LINE: foreach my $s (<$fh>) {
     $v =~ s/^"|"$//g;
     my $so = $o;
     $so =~ s/^[^:]+:://;
-    print "s: '$s' o: $o  so: $so  v: $v\n" if($mp->opts->verbose >=2);
+    print "s: '$s' o: '$o'  so: '$so'  v: '$v'\n" if($mp->opts->verbose >=2);
 
     if($expected{$o} && $expected{$o}{seen}) {
         $mp->add_message(OK, "OID $o seen more than once.");
@@ -605,6 +606,11 @@ if(scalar(@crits)+scalar(@warns)+scalar(@oks)+scalar(@unknowns) == 1) {
 }
 else {
     $message = join(", ", grep($_, $crits, $warns, $oks, $unknowns, $errors)) . ($message?" - $message":"");
+    if($code == OK && scalar keys %expected) {
+        my @l = map {$_->{desc}} values %expected;
+        my $l = join(", ", uniq sort @l);
+        $message .= " ($l)";
+    }
 }
 
 if($code == OK && (scalar(@unknowns)+scalar(@errors)) > 0) {
