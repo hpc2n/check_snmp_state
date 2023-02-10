@@ -171,9 +171,9 @@ $mp->add_arg(
 );
 
 $mp->add_arg(
-    spec => 'snmptimeout|T=i',
+    spec => 'snmptimeout|T=f',
     help => "SNMP timeout (default: %s)",
-    default => 2,
+    default => 1,
 );
 
 $mp->getopts;
@@ -444,7 +444,8 @@ if(@entityname) {
         foreach my $o (@oid) {
             my $s = "$o.$id";
             push @eoid, $s;
-            $expected{$s} = $en;
+            $expected{$s}{desc} = $en;
+            $expected{$s}{seen} = 0;
         }
     }
     if(!@eoid) {
@@ -453,11 +454,16 @@ if(@entityname) {
     push @get, @eoid;
 }
 else {
-    push @get, @oid;
+    foreach my $o (@oid) {
+        push @get, $o;
+        if(!$mp->opts->walk) {
+            $expected{$o}{seen} = 0;
+        }
+    }
 }
 
 if($mp->opts->verbose >=2) {
-    print "expected:\n", Dumper(\%expected);
+    print "expected before:\n", Dumper(\%expected);
 }
 
 if($mp->opts->verbose >=2) {
@@ -467,8 +473,8 @@ if($mp->opts->verbose >=2) {
 my @crits;
 my @warns;
 my @oks;
-my @undefs;
-my @others;
+my @unknowns;
+my @errors;
 
 my $lastmsg;
 
@@ -476,19 +482,47 @@ open(my $fh, "-|", @get) or $mp->plugin_die("Running $get[0]: $!");
 LINE: foreach my $s (<$fh>) {
     chomp $s;
     my($o, $v) = split(/ /, $s, 2);
+    if(!$v) {
+        $mp->add_message(OK, "Input '$s' didn't parse.");
+        push @errors, "UNKNOWN/PARSE ERROR: $s";
+        next;
+    }
+    if($v =~ /No Such Instance|No Such Object|Unknown Object Identifier/) {
+        # Ugh, the 'No Such Instance' error is only reported as a return value
+        # for this OID...
+        $mp->add_message(OK, "OID $o does not exist.");
+        push @errors, "UNKNOWN/error: $s";
+        next;
+    }
+    if($o !~ /^[0-9\.]$|::/) {
+        # This doesn't look like an OID, so it's likely an error message.
+        $mp->add_message(OK, "Input '$s' didn't parse.");
+        push @errors, "UNKNOWN/PARSE ERROR: $s";
+        next;
+    }
     $v =~ s/^"|"$//g;
     my $so = $o;
     $so =~ s/^[^:]+:://;
-    print "o: $o  so: $so  v: $v\n" if($mp->opts->verbose >=2);
-    if(!$v) {
-        $mp->add_message(OK, "Input '$s' didn't parse.");
-        push @undefs, "UNKNOWN/PARSE ERROR: $s";
+    print "s: '$s' o: $o  so: $so  v: $v\n" if($mp->opts->verbose >=2);
+
+    if($expected{$o} && $expected{$o}{seen}) {
+        $mp->add_message(OK, "OID $o seen more than once.");
+        push @errors, "UNKNOWN/error: OID $o seen more than once.";
         next;
     }
+
+    if(!$mp->opts->walk && !$expected{$o}) {
+        $mp->add_message(OK, "OID $o not expected.");
+        push @errors, "UNKNOWN/error: OID $o not expected.";
+        next;
+    }
+
+    $expected{$o}{seen} = 1;
+
     my $vo = $o;
-    if($expected{$o}) {
-        $lastmsg = "$expected{$o}=$v";
-        $vo = "$expected{$o} ($o)";
+    if($expected{$o}{desc}) {
+        $lastmsg = "$expected{$o}{desc}=$v";
+        $vo = "$expected{$o}{desc} ($o)";
     }
     else {
         $lastmsg = "$so=$v";
@@ -515,15 +549,33 @@ LINE: foreach my $s (<$fh>) {
     }
     # Treat any leftovers as UNDEFINED.
     $mp->add_message(OK, "$lastmsg/UNDEFINED.");
-    push @undefs, "UNKNOWN/UNDEFINED: $vo $v";
+    push @unknowns, "UNKNOWN/UNDEFINED: $vo $v";
 }
 
-# Do this check before we add any execution errors to the mix
-my $totresults = scalar(@oks) + scalar(@warns) + scalar(@crits) + scalar(@undefs);
-if($totresults < scalar(@oid)) {
-    my $msg = "Expected " . scalar(@oid) . " values, only found $totresults";
-    $mp->add_message(OK, "$msg.");
-    push @others, "UNKNOWN/missing: $msg";
+if($mp->opts->verbose >=2) {
+    print "expected after:\n", Dumper(\%expected);
+}
+
+my $missing=0;
+foreach my $o (sort keys %expected) {
+    next if($expected{$o}{seen});
+
+    $missing++;
+
+    push @errors, "UNKNOWN/missing: $o" . ($expected{$o}{desc}?" ($expected{$o}{desc})":"");
+}
+
+if($missing > 0) {
+    $mp->add_message(OK, "Expected " . scalar(keys %expected) . " values, but missing $missing.");
+}
+elsif($mp->opts->walk) {
+    # At least expect one result when walking...
+    my $totresults = scalar(@oks) + scalar(@warns) + scalar(@crits) + scalar(@unknowns);
+    if($totresults < 1) {
+        my $msg = "Expected values, only found $totresults";
+        $mp->add_message(OK, "$msg.");
+        push @errors, "UNKNOWN/missing: $msg";
+    }
 }
 
 if(!close($fh)) {
@@ -536,26 +588,27 @@ if(!close($fh)) {
     }
     $err = "$get[0] $err";
     $mp->add_message(OK, "$err.");
-    push @others, "UNKNOWN/execution: $err";
+    push @errors, "UNKNOWN/execution: $err";
 }
 
 my $crits = scalar @crits ? sprintf("%d Critical", scalar @crits) : undef;
-my $warns = scalar @warns ? sprintf("%d Warnings", scalar @warns) : undef;
+my $warns = scalar @warns ? sprintf("%d Warning", scalar @warns) : undef;
 my $oks = scalar @oks ? sprintf("%d OK", scalar @oks) : undef;
-my $undefs = scalar @undefs ? sprintf("%d Undefined", scalar @undefs) : undef;
+my $unknowns = scalar @unknowns ? sprintf("%d Unknown", scalar @unknowns) : undef;
+my $errors = scalar @errors ? sprintf("%d Error", scalar @errors) : undef;
 
 my($code, $message) = $mp->check_messages;
 
-if(scalar(@crits)+scalar(@warns)+scalar(@oks)+scalar(@undefs) == 1) {
+if(scalar(@crits)+scalar(@warns)+scalar(@oks)+scalar(@unknowns) == 1) {
     # Print single-value results as short status
-    $message = $lastmsg;
+    $message = $lastmsg if ($lastmsg);
 }
 else {
-    $message = join(", ", grep($_, $crits, $warns, $oks, $undefs)) . ($message?" - $message":"");
+    $message = join(", ", grep($_, $crits, $warns, $oks, $unknowns, $errors)) . ($message?" - $message":"");
 }
 
-if($code == OK && (scalar(@undefs)+scalar(@others)) > 0) {
+if($code == OK && (scalar(@unknowns)+scalar(@errors)) > 0) {
     $code = UNKNOWN;
 }
 
-$mp->plugin_exit($code, join("\n", $message, @crits, @warns, @oks, @undefs, @others));
+$mp->plugin_exit($code, join("\n", $message, @crits, @warns, @oks, @unknowns, @errors));
