@@ -606,7 +606,7 @@ if(scalar(@crits)+scalar(@warns)+scalar(@oks)+scalar(@unknowns) == 1) {
 }
 else {
     $message = join(", ", grep($_, $crits, $warns, $oks, $unknowns, $errors)) . ($message?" - $message":"");
-    if($code == OK && scalar keys %expected) {
+    if($code == OK && (scalar(@unknowns)+scalar(@errors)) == 0 && scalar keys %expected) {
         my @l = map {exists($_->{desc})?$_->{desc}:()} values %expected;
         if(@l) {
             my $l = join(", ", uniq sort @l);
