@@ -30,7 +30,7 @@ $Data::Dumper::Indent = 1;
 our $mp;
 
 my @snmpbaseargs = ("-Oq", "-Lo");
-my @snmpwalkargs = ("-Cr45");
+my @snmpwalkargs = ("-Cr31");
 my @rundirs = ('/run/icinga2', '/run/icinga', '/run/nagios');
 
 # Mostly for test/debug
