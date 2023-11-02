@@ -30,6 +30,7 @@ $Data::Dumper::Indent = 1;
 our $mp;
 
 my @snmpbaseargs = ("-Oq", "-Lo");
+my @snmpwalkargs = ("-Cr64");
 my @rundirs = ('/run/icinga2', '/run/icinga', '/run/nagios');
 
 # Mostly for test/debug
@@ -210,6 +211,7 @@ if($mp->opts->oid) {
 
 if($mp->opts->protocol eq "1") {
     $snmpwalk = "snmpwalk";
+    @snmpwalkargs = ();
 }
 
 if($mp->opts->next) {
@@ -348,6 +350,7 @@ my @args;
 
 if($mp->opts->walk) {
     push @cmd, $snmpwalk;
+    push @args, @snmpwalkargs;
 }
 else {
     push @cmd, $snmpget;
