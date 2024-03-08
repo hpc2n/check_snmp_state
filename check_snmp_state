@@ -86,6 +86,12 @@ $mp->add_arg(
 );
 
 $mp->add_arg(
+    spec => 'minresults|r=i',
+    help => "Require at least this number of results/values when walking (default: %s)",
+    default => 1,
+);
+
+$mp->add_arg(
     spec => 'oid|oids|o=s@',
     help => 'OIDs whose value you wish to query',
     label => 'OID1 ... OIDn',
@@ -573,10 +579,9 @@ if($missing > 0) {
     $mp->add_message(OK, "Expected " . scalar(keys %expected) . " values, but missing $missing.");
 }
 elsif($mp->opts->walk) {
-    # At least expect one result when walking...
     my $totresults = scalar(@oks) + scalar(@warns) + scalar(@crits) + scalar(@unknowns);
-    if($totresults < 1) {
-        my $msg = "Expected values, only found $totresults";
+    if($totresults < $mp->opts->minresults) {
+        my $msg = sprintf("Expected at least %d values, only found $totresults", $mp->opts->minresults);
         $mp->add_message(OK, "$msg.");
         push @errors, "UNKNOWN/missing: $msg";
     }

@@ -162,3 +162,30 @@ OK: IDRAC-MIB-SMIv2::systemStateProcessorDeviceStatusCombined.1 ok
 OK: IDRAC-MIB-SMIv2::systemStateBatteryStatusCombined.1 ok
 OK: IDRAC-MIB-SMIv2::systemStateTemperatureStatisticsStatusCombined.1 ok
 ```
+
+### Check IBM TS4500 tape drive availability
+
+The IBM TS4500 tape library tends to just ignore a tape drive when
+communication has stopped working entirely, specify the expected number
+of results to work around this problem.
+
+The below example expects 12 tape drives to be present, but since one of
+then is on the fritz the library silently ignores the broken one in the
+middle of the bunch and returns state for 11 drives.
+
+```
+$ ./check_snmp_state -H hostname-ts4500 -M /path/to/mibs/ibm/ts4500 -W -o SNIA-SML-MIB::mediaAccessDevice-Availability -O runningFullPower -r 12
+SNMP_STATE UNKNOWN - 11 OK, 1 Error - Expected at least 12 values, only found 11.
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.1 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.2 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.3 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.4 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.5 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.6 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.7 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.8 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.9 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.10 runningFullPower
+OK: SNIA-SML-MIB::mediaAccessDevice-Availability.11 runningFullPower
+UNKNOWN/missing: Expected at least 12 values, only found 11
+```
